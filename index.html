@@ -327,19 +327,28 @@ const googleProvider = new GoogleAuthProvider();
   MONTHS.forEach(function(m,i){ MONTH_MAP[m]=i; });
   MONTH_MAP["setiembre"]=8;
 
-  function buildDateRegex(){
+  function buildDateRegex(anchored){
     var monthNames = MONTHS.concat(["setiembre"]).join("|");
     var weekdays = "lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo";
+    var lead = anchored ? "^[ \\t]*" : "\\b";
     var parts = [
-      "\\b(\\d{1,2})\\s+de\\s+(" + monthNames + ")(?:\\s+de\\s+(\\d{4}))?\\b",
-      "\\b(?:" + weekdays + ")\\s+(\\d{1,2})(?:\\s+de\\s+(" + monthNames + "))?\\b",
-      "\\b(\\d{1,2})[\\/\\-\\.](\\d{1,2})(?:[\\/\\-\\.](\\d{2,4}))?\\b"
+      lead + "(\\d{1,2})\\s+de\\s+(" + monthNames + ")(?:\\s+de\\s+(\\d{4}))?\\b",
+      lead + "(?:" + weekdays + ")\\s+(\\d{1,2})(?:\\s+de\\s+(" + monthNames + "))?\\b",
+      lead + "(\\d{1,2})[\\/\\-\\.](\\d{1,2})(?:[\\/\\-\\.](\\d{2,4}))?\\b"
     ];
-    return new RegExp(parts.join("|"), "gi");
+    return new RegExp(parts.join("|"), anchored ? "gim" : "gi");
   }
 
-  function parseImportText(text, refYear){
-    var re = buildDateRegex();
+  // Finds date-like matches in the text. When `anchored` is true, only dates
+  // that start a line count (the format this app's own export uses: one
+  // "dd/mm" header alone at the start of each line). This avoids false
+  // positives from ordinary text like "tipo 6/7am" or "(10/10)" being
+  // misread as calendar dates. parseImportText tries the anchored, strict
+  // pass first and only falls back to scanning the whole text (the original
+  // behavior, needed for free-form pasted text with dates mixed into
+  // sentences) when that strict pass doesn't find a real per-line pattern.
+  function findDateMatches(text, refYear, anchored){
+    var re = buildDateRegex(anchored);
     var matches = [];
     var m;
     while((m = re.exec(text))){
@@ -360,6 +369,12 @@ const googleProvider = new GoogleAuthProvider();
       } else { continue; }
       matches.push({ index:m.index, end: re.lastIndex, iso: iso });
     }
+    return matches;
+  }
+
+  function parseImportText(text, refYear){
+    var matches = findDateMatches(text, refYear, true);
+    if(matches.length < 2){ matches = findDateMatches(text, refYear, false); }
     if(!matches.length) return [];
     var yearOffset = 0, prevMonth = null;
     matches.forEach(function(mt){
