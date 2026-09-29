@@ -264,6 +264,7 @@ const googleProvider = new GoogleAuthProvider();
     authReady: false,
     activities: [],
     days: [],
+    months: [],
     activeTab: "cal",
     calMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     heatYear: new Date().getFullYear(),
@@ -273,12 +274,14 @@ const googleProvider = new GoogleAuthProvider();
   /* ============================= persistence (Firestore) ============================= */
   function activitiesCol(){ return collection(db, "users", state.user.uid, "activities"); }
   function daysCol(){ return collection(db, "users", state.user.uid, "days"); }
+  function monthsCol(){ return collection(db, "users", state.user.uid, "months"); }
 
-  var unsubActivities = null, unsubDays = null;
+  var unsubActivities = null, unsubDays = null, unsubMonths = null;
 
   function watchUserData(){
     if(unsubActivities) unsubActivities();
     if(unsubDays) unsubDays();
+    if(unsubMonths) unsubMonths();
     unsubActivities = onSnapshot(activitiesCol(), function(snap){
       state.activities = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
         .filter(function(a){ return !a.archived; })
@@ -289,6 +292,10 @@ const googleProvider = new GoogleAuthProvider();
       state.days = snap.docs.map(function(d){ return Object.assign({id:d.id, date:d.id}, d.data()); });
       render();
     }, function(err){ console.error("days snapshot error", err); showToast("No se pudieron cargar tus días"); });
+    unsubMonths = onSnapshot(monthsCol(), function(snap){
+      state.months = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      render();
+    }, function(err){ console.error("months snapshot error", err); showToast("No se pudieron cargar las notas del mes"); });
   }
 
   function createActivity(name,color){
@@ -308,6 +315,14 @@ const googleProvider = new GoogleAuthProvider();
     var next = Object.assign({}, base, patch, { updatedAt: Date.now() });
     delete next.id; delete next.date;
     setDoc(doc(daysCol(), iso), next);
+  }
+
+  function getMonthNote(monthKey){
+    var m = state.months.find(function(x){ return x.id===monthKey; });
+    return (m && m.note) || "";
+  }
+  function saveMonthNote(monthKey, note){
+    setDoc(doc(monthsCol(), monthKey), { note: note, updatedAt: Date.now() }, { merge: true });
   }
 
   /* ============================= import parser ============================= */
@@ -478,6 +493,12 @@ const googleProvider = new GoogleAuthProvider();
   }
 
   /* ---- calendar ---- */
+  // Local, unsaved draft of the month-notes box — same pattern as sheetDraft:
+  // nothing reaches Firestore until "Guardar", and it only resets when the
+  // viewed month actually changes, so a background Firestore snapshot never
+  // wipes out text the person is mid-typing.
+  var monthNoteDraft = null;
+
   function renderCalendarPanel(){
     var el = document.getElementById("panel-cal");
     var month = state.calMonth;
@@ -521,6 +542,20 @@ const googleProvider = new GoogleAuthProvider();
         noteFlag + '<span class="dnum">'+day+'</span>' + dots + '</button>';
     });
     html += '</div></div>';
+
+    var monthKey = y+"-"+pad2(m+1);
+    if(!monthNoteDraft || monthNoteDraft.key !== monthKey){
+      monthNoteDraft = { key: monthKey, note: getMonthNote(monthKey) };
+    }
+    html += '<div class="card">' +
+      '<h2 style="font-size:17px;margin-bottom:12px;">Notas de '+MONTHS[m]+'</h2>' +
+      '<textarea class="note-input" id="month-note-input" placeholder="Anotaciones generales del mes...">'+escapeHtml(monthNoteDraft.note)+'</textarea>' +
+      '<div class="btn-row" style="margin-top:12px;">' +
+        '<button class="btn primary" id="month-note-save">Guardar</button>' +
+        '<button class="btn ghost" id="month-note-cancel">Cancelar</button>' +
+      '</div>' +
+    '</div>';
+
     el.innerHTML = html;
 
     document.getElementById("prev-m").addEventListener("click", function(){
@@ -534,6 +569,17 @@ const googleProvider = new GoogleAuthProvider();
     });
     el.querySelectorAll(".day-cell[data-iso]").forEach(function(btn){
       btn.addEventListener("click", function(){ state.openDayISO = btn.dataset.iso; render(); });
+    });
+
+    var monthNoteEl = document.getElementById("month-note-input");
+    monthNoteEl.addEventListener("input", function(){ monthNoteDraft.note = monthNoteEl.value; });
+    document.getElementById("month-note-save").addEventListener("click", function(){
+      saveMonthNote(monthKey, monthNoteDraft.note);
+      showToast("Notas del mes guardadas");
+    });
+    document.getElementById("month-note-cancel").addEventListener("click", function(){
+      monthNoteDraft = null;
+      renderCalendarPanel();
     });
   }
 
@@ -899,10 +945,13 @@ const googleProvider = new GoogleAuthProvider();
   onAuthStateChanged(auth, function(user){
     state.authReady = true;
     state.user = user;
-    state.activities = []; state.days = [];
+    state.activities = []; state.days = []; state.months = [];
     state.openDayISO = null;
     if(user){ watchUserData(); }
-    else if(unsubActivities || unsubDays){ unsubActivities && unsubActivities(); unsubDays && unsubDays(); unsubActivities=null; unsubDays=null; }
+    else if(unsubActivities || unsubDays || unsubMonths){
+      unsubActivities && unsubActivities(); unsubDays && unsubDays(); unsubMonths && unsubMonths();
+      unsubActivities=null; unsubDays=null; unsubMonths=null;
+    }
     render();
   });
 
