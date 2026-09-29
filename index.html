@@ -117,7 +117,7 @@
   /* ---------- day sheet ---------- */
   .scrim{ position:fixed; inset:0; background:rgba(10,14,10,.42); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px; }
   .scrim[hidden]{ display:none; }
-  .sheet{ background:var(--surface); width:100%; max-width:560px; border-radius:24px; padding:20px 20px calc(22px + env(safe-area-inset-bottom,0px)); box-shadow:0 20px 60px rgba(0,0,0,.30); max-height:min(88vh,720px); overflow-y:auto; }
+  .sheet{ background:var(--surface); width:100%; max-width:640px; border-radius:24px; padding:20px 20px calc(22px + env(safe-area-inset-bottom,0px)); box-shadow:0 20px 60px rgba(0,0,0,.30); max-height:min(90vh,860px); overflow-y:auto; }
   .sheet-handle{ width:36px;height:4px;border-radius:99px; background:var(--surface-3); margin:0 auto 14px; }
   .sheet-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:14px; }
   .sheet-head h3{ font-size:19px; text-transform:capitalize; }
@@ -127,7 +127,7 @@
   .chip{ display:inline-flex; align-items:center; gap:7px; padding:8px 13px; border-radius:999px; border:1.5px solid var(--border); background:var(--surface); font-size:13.5px; font-weight:600; cursor:pointer; color:var(--ink); }
   .chip .cdot{ width:9px;height:9px;border-radius:50%; flex:none; }
   .chip.on{ border-color:transparent; }
-  textarea.note-input{ width:100%; min-height:90px; resize:vertical; border:1px solid var(--border); border-radius:var(--r-m); background:var(--surface-2); padding:11px 13px; font-size:14px; color:var(--ink); line-height:1.5; }
+  textarea.note-input{ width:100%; min-height:280px; resize:vertical; border:1px solid var(--border); border-radius:var(--r-m); background:var(--surface-2); padding:11px 13px; font-size:14px; color:var(--ink); line-height:1.5; }
   textarea.note-input:focus, input:focus, select:focus{ outline:2px solid var(--accent); outline-offset:1px; }
   .save-hint{ font-size:11.5px; color:var(--ink-mute); margin-top:8px; height:14px; }
 
@@ -309,18 +309,6 @@ const googleProvider = new GoogleAuthProvider();
     delete next.id; delete next.date;
     setDoc(doc(daysCol(), iso), next);
   }
-  function toggleActivityOnDay(iso, typeId){
-    var day = getDay(iso);
-    var ids = (day.activityIds||[]).slice();
-    var idx = ids.indexOf(typeId);
-    if(idx>=0) ids.splice(idx,1); else ids.push(typeId);
-    saveDay(iso, { activityIds: ids });
-  }
-  var saveNoteDebounced = debounce(function(iso,text){
-    saveDay(iso, { note:text });
-    var hint = document.getElementById("save-hint");
-    if(hint) hint.textContent = "Guardado";
-  }, 550);
 
   /* ============================= import parser ============================= */
   var MONTH_MAP = {};
@@ -554,37 +542,68 @@ const googleProvider = new GoogleAuthProvider();
     if(scrim) scrim.hidden = true;
   }
 
+  // Local, unsaved draft of the open day sheet. Nothing here touches
+  // Firestore until "Guardar" is pressed; "Cancelar" (or the ✕, or clicking
+  // outside) just discards it. Kept outside renderDaySheet so a background
+  // Firestore snapshot re-render while the sheet is open doesn't wipe out
+  // whatever the person is mid-typing.
+  var sheetDraft = null;
+
   function renderDaySheet(iso){
     var scrim = document.getElementById("scrim");
     var sheet = document.getElementById("sheet");
     if(!scrim||!sheet) return;
     scrim.hidden = false;
     var day = getDay(iso);
+    if(!sheetDraft || sheetDraft.iso !== iso){
+      sheetDraft = { iso: iso, note: day.note||"", activityIds: (day.activityIds||[]).slice() };
+    }
     var html = '<div class="sheet-handle"></div>' +
       '<div class="sheet-head"><h3>'+dateLabel(iso)+'</h3><button class="sheet-close" id="sheet-close">✕</button></div>' +
       '<label class="field-label">¿Qué hiciste?</label>' +
       '<div class="chip-row" id="sheet-chips">' +
         state.activities.map(function(a){
-          var on = (day.activityIds||[]).indexOf(a.id)>=0;
+          var on = sheetDraft.activityIds.indexOf(a.id)>=0;
           return '<button type="button" class="chip'+(on?" on":"")+'" data-id="'+a.id+'" style="'+(on? ("background:"+rgba(a.color,.16)+";border-color:"+a.color+";color:"+a.color) : "")+'">' +
             '<span class="cdot" style="background:'+a.color+'"></span>'+escapeHtml(a.name)+'</button>';
         }).join("") +
         (state.activities.length===0 ? '<span class="muted" style="font-size:13px;">Todavía no creaste actividades — hacelo en la pestaña Actividades.</span>' : '') +
       '</div>' +
       '<label class="field-label" style="margin-top:16px;">Notas del día</label>' +
-      '<textarea class="note-input" id="note-input" placeholder="Contá cómo estuvo el día...">'+escapeHtml(day.note||"")+'</textarea>' +
-      '<div class="save-hint" id="save-hint"></div>';
+      '<textarea class="note-input" id="note-input" placeholder="Contá cómo estuvo el día...">'+escapeHtml(sheetDraft.note)+'</textarea>' +
+      '<div class="btn-row" style="margin-top:16px;">' +
+        '<button class="btn primary" id="sheet-save">Guardar</button>' +
+        '<button class="btn ghost" id="sheet-cancel">Cancelar</button>' +
+      '</div>';
     sheet.innerHTML = html;
 
-    document.getElementById("sheet-close").addEventListener("click", function(){ state.openDayISO=null; closeSheet(); });
-    scrim.addEventListener("click", function(e){ if(e.target===scrim){ state.openDayISO=null; closeSheet(); } });
+    function discardAndClose(){ sheetDraft = null; state.openDayISO = null; closeSheet(); }
+
+    document.getElementById("sheet-close").addEventListener("click", discardAndClose);
+    document.getElementById("sheet-cancel").addEventListener("click", discardAndClose);
+    scrim.addEventListener("click", function(e){ if(e.target===scrim){ discardAndClose(); } });
+
     sheet.querySelectorAll(".chip[data-id]").forEach(function(chip){
-      chip.addEventListener("click", function(){ toggleActivityOnDay(iso, chip.dataset.id); });
+      chip.addEventListener("click", function(){
+        var id = chip.dataset.id;
+        var idx = sheetDraft.activityIds.indexOf(id);
+        if(idx>=0) sheetDraft.activityIds.splice(idx,1); else sheetDraft.activityIds.push(id);
+        var isOn = sheetDraft.activityIds.indexOf(id)>=0;
+        var act = state.activities.find(function(a){ return a.id===id; });
+        chip.classList.toggle("on", isOn);
+        chip.style.cssText = (isOn && act) ? ("background:"+rgba(act.color,.16)+";border-color:"+act.color+";color:"+act.color) : "";
+      });
     });
+
     var noteEl = document.getElementById("note-input");
-    noteEl.addEventListener("input", function(){
-      document.getElementById("save-hint").textContent = "Guardando…";
-      saveNoteDebounced(iso, noteEl.value);
+    noteEl.addEventListener("input", function(){ sheetDraft.note = noteEl.value; });
+
+    document.getElementById("sheet-save").addEventListener("click", function(){
+      saveDay(iso, { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note });
+      showToast("Día guardado");
+      sheetDraft = null;
+      state.openDayISO = null;
+      closeSheet();
     });
   }
 
