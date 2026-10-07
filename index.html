@@ -669,7 +669,7 @@ const googleProvider = new GoogleAuthProvider();
       '<h2 style="font-size:17px;margin-bottom:12px;">Notas de '+MONTHS[m]+'</h2>' +
       '<textarea class="note-input" id="month-note-input" placeholder="'+copy("monthHint")+'">'+escapeHtml(monthNoteDraft.note)+'</textarea>' +
       '<div class="btn-row" style="margin-top:12px;">' +
-        '<button class="btn primary" id="month-note-save">Guardar</button>' +
+        '<button class="btn primary" id="month-note-save" title="Ctrl + Enter">Guardar</button>' +
         '<button class="btn ghost" id="month-note-cancel">Cancelar</button>' +
       '</div>' +
     '</div>';
@@ -691,10 +691,14 @@ const googleProvider = new GoogleAuthProvider();
 
     var monthNoteEl = document.getElementById("month-note-input");
     monthNoteEl.addEventListener("input", function(){ monthNoteDraft.note = monthNoteEl.value; monthNoteDraft.dirty = true; });
-    document.getElementById("month-note-save").addEventListener("click", function(){
+    function saveMonthDraft(){
       saveMonthNote(monthKey, monthNoteDraft.note);
       monthNoteDraft.dirty = false;
       showToast("Notas del mes guardadas");
+    }
+    document.getElementById("month-note-save").addEventListener("click", saveMonthDraft);
+    monthNoteEl.addEventListener("keydown", function(e){
+      if((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); monthNoteDraft.note = monthNoteEl.value; saveMonthDraft(); }
     });
     document.getElementById("month-note-cancel").addEventListener("click", function(){
       monthNoteDraft = null;
@@ -737,7 +741,7 @@ const googleProvider = new GoogleAuthProvider();
       '<label class="field-label" style="margin-top:16px;">Notas del día</label>' +
       '<textarea class="note-input" id="note-input" placeholder="'+copy("noteHint")+'">'+escapeHtml(sheetDraft.note)+'</textarea>' +
       '<div class="btn-row" style="margin-top:16px;">' +
-        '<button class="btn primary" id="sheet-save">Guardar</button>' +
+        '<button class="btn primary" id="sheet-save" title="Ctrl + Enter">Guardar</button>' +
         '<button class="btn ghost" id="sheet-cancel">Cancelar</button>' +
       '</div>';
     sheet.innerHTML = html;
@@ -763,12 +767,17 @@ const googleProvider = new GoogleAuthProvider();
     var noteEl = document.getElementById("note-input");
     noteEl.addEventListener("input", function(){ sheetDraft.note = noteEl.value; });
 
-    document.getElementById("sheet-save").addEventListener("click", function(){
+    function saveAndClose(){
       saveDay(iso, { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note });
       showToast("Día guardado");
       sheetDraft = null;
       state.openDayISO = null;
       closeSheet();
+    }
+    document.getElementById("sheet-save").addEventListener("click", saveAndClose);
+    // Ctrl+Enter (Cmd+Enter on Mac) while typing the note saves the day.
+    noteEl.addEventListener("keydown", function(e){
+      if((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); sheetDraft.note = noteEl.value; saveAndClose(); }
     });
   }
 
