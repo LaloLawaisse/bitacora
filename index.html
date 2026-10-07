@@ -136,6 +136,25 @@
   .dot{ width:7px;height:7px;border-radius:50%; flex:none; }
   .dot-more{ font-size:9px; color:var(--ink-mute); font-weight:700; }
   .note-flag{ position:absolute; top:6px; right:7px; width:5px;height:5px;border-radius:50%; background:var(--gold); }
+  .photo-flag{ position:absolute; right:6px; bottom:6px; width:12px;height:12px; color:var(--accent); display:block; }
+
+  /* ---------- photos ---------- */
+  .photo-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:8px; }
+  .photo-thumb{ position:relative; aspect-ratio:1/1; border-radius:var(--r-m); overflow:hidden; background:var(--surface-3); border:1px solid var(--border); padding:0; cursor:zoom-in; }
+  .photo-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .photo-thumb .photo-del{ position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; border:none; background:rgba(0,0,0,.62); color:#fff; font-size:12px; line-height:22px; padding:0; cursor:pointer; }
+  .photo-thumb.is-new::after{ content:""; position:absolute; left:5px; bottom:5px; width:7px; height:7px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 2px rgba(255,255,255,.85); }
+  .photo-add{ aspect-ratio:1/1; border-radius:var(--r-m); border:1.5px dashed var(--border-strong); background:var(--surface-2); color:var(--ink-soft); font-size:12px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
+  .photo-add:hover{ border-color:var(--accent); color:var(--accent-strong); }
+  .photo-add svg{ width:20px; height:20px; }
+  .photo-status{ font-size:12px; color:var(--ink-mute); margin-top:6px; min-height:16px; }
+  .lightbox{ position:fixed; inset:0; background:rgba(0,0,0,.88); z-index:80; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .lightbox img{ max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; }
+  .lightbox button{ position:absolute; border:none; background:rgba(255,255,255,.16); color:#fff; width:40px; height:40px; border-radius:50%; font-size:20px; cursor:pointer; }
+  .lightbox .lb-close{ top:14px; right:14px; }
+  .lightbox .lb-prev{ left:14px; top:50%; transform:translateY(-50%); }
+  .lightbox .lb-next{ right:14px; top:50%; transform:translateY(-50%); }
+  .lightbox .lb-count{ position:absolute; bottom:16px; left:50%; transform:translateX(-50%); color:#fff; font-size:12.5px; background:rgba(0,0,0,.45); padding:4px 10px; border-radius:99px; }
 
   /* ---------- day sheet ---------- */
   .scrim{ position:fixed; inset:0; background:rgba(10,14,10,.42); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px; }
@@ -235,7 +254,7 @@ import {
   getRedirectResult, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, doc, setDoc, onSnapshot, collection, query, where
+  getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, query, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ============================= firebase init ============================= */
@@ -356,7 +375,7 @@ const googleProvider = new GoogleAuthProvider();
   }
 
   function switchSpace(){
-    if(monthNoteDraft && monthNoteDraft.dirty && monthNoteDraft.note !== getMonthNote(monthNoteDraft.key)){
+    if(monthNoteDraft && ((monthNoteDraft.dirty && monthNoteDraft.note !== getMonthNote(monthNoteDraft.key)) || photosChanged(monthNoteDraft.photos))){
       if(!confirm("Tenés cambios sin guardar en las notas del mes. ¿Cambiar de bitácora igual?")) return;
     }
     state.space = state.space==="grow" ? "main" : "grow";
@@ -381,6 +400,7 @@ const googleProvider = new GoogleAuthProvider();
   function activitiesCol(){ return spaceCol("activities"); }
   function daysCol(){ return spaceCol("days"); }
   function monthsCol(){ return spaceCol("months"); }
+  function photosCol(){ return spaceCol("photos"); }
 
   var unsubActivities = null, unsubDays = null, unsubMonths = null;
 
@@ -427,8 +447,232 @@ const googleProvider = new GoogleAuthProvider();
     var m = state.months.find(function(x){ return x.id===monthKey; });
     return (m && m.note) || "";
   }
-  function saveMonthNote(monthKey, note){
-    setDoc(doc(monthsCol(), monthKey), { note: note, updatedAt: Date.now() }, { merge: true });
+  function saveMonthNote(monthKey, note, photoCount){
+    var data = { note: note, updatedAt: Date.now() };
+    if(typeof photoCount === "number") data.photoCount = photoCount;
+    setDoc(doc(monthsCol(), monthKey), data, { merge: true });
+  }
+  function getMonthPhotoCount(monthKey){
+    var m = state.months.find(function(x){ return x.id===monthKey; });
+    return (m && m.photoCount) || 0;
+  }
+
+  /* ============================= photos ============================= */
+  // Photos are shrunk in the browser (max 1280px, JPEG) and stored as small
+  // documents in their own collection (photos / grow_photos), one per photo,
+  // tagged with the day ("d:2026-10-07") or month ("m:2026-10") they belong to.
+  // This needs no extra Firebase service or billing plan. The day / month doc
+  // only keeps a `photoCount`, so the calendar can show a camera mark and the
+  // app only downloads the images of the day/month you actually open.
+  var MAX_PHOTOS = 12;
+  var PHOTO_MAX_SIDE = 1280;
+  var PHOTO_MAX_CHARS = 760000;   // Firestore docs are capped at 1 MiB
+
+  // A photo "draft": what's shown in a sheet/card before pressing Guardar.
+  function newPhotoDraft(key){
+    return { key: key, items: [], removed: [], loaded: false, loading: false, failed: false, loadedCount: -1, touched: false, busy: 0 };
+  }
+  function photosChanged(pd){
+    return !!pd && (pd.removed.length > 0 || pd.items.some(function(i){ return i.isNew; }));
+  }
+
+  function ensurePhotos(pd, savedCount, refresh){
+    if(!pd || pd.loading) return;
+    if(pd.loaded){
+      // Data about how many photos exist can arrive after the first render.
+      if(pd.touched || pd.failed || pd.loadedCount === savedCount) return;
+      pd.loaded = false;
+    }
+    if(savedCount <= 0){ pd.loaded = true; pd.loadedCount = savedCount; return; }
+    pd.loading = true; pd.failed = false;
+    getDocs(query(photosCol(), where("key","==",pd.key))).then(function(snap){
+      var fromDb = snap.docs.map(function(d){
+        var v = d.data();
+        return { id:d.id, data:v.data, createdAt:v.createdAt||0, isNew:false };
+      }).filter(function(i){ return i.data && pd.removed.indexOf(i.id)<0; })
+        .sort(function(a,b){ return a.createdAt-b.createdAt; });
+      var fresh = pd.items.filter(function(i){ return i.isNew; });
+      pd.items = fromDb.concat(fresh);
+      pd.loaded = true; pd.loading = false; pd.loadedCount = savedCount;
+      refresh();
+    }).catch(function(err){
+      console.error("photos load error", err);
+      pd.loading = false; pd.failed = true; refresh();
+    });
+  }
+
+  // Writes the draft's changes. Returns the photo count to store on the day/month doc.
+  function commitPhotos(pd, savedCount){
+    pd.removed.forEach(function(id){
+      deleteDoc(doc(photosCol(), id)).catch(function(e){ console.error(e); });
+    });
+    var added = 0;
+    pd.items.forEach(function(it){
+      if(!it.isNew) return;
+      added++;
+      setDoc(doc(photosCol(), it.id), { key: pd.key, data: it.data, w: it.w||0, h: it.h||0, createdAt: it.createdAt })
+        .catch(function(e){ console.error(e); showToast("No se pudo guardar una foto"); });
+    });
+    // If the existing photos never finished loading we can't have removed any.
+    var count = pd.loaded ? pd.items.length : savedCount + added;
+    pd.items.forEach(function(it){ it.isNew = false; });
+    pd.removed = []; pd.touched = false; pd.loadedCount = count;
+    return count;
+  }
+
+  function loadImageSource(file){
+    if(window.createImageBitmap){
+      return createImageBitmap(file, { imageOrientation: "from-image" }).catch(function(){ return loadViaImgTag(file); });
+    }
+    return loadViaImgTag(file);
+  }
+  function loadViaImgTag(file){
+    return new Promise(function(resolve, reject){
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function(){ URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("decode")); };
+      img.src = url;
+    });
+  }
+  function shrinkImage(file){
+    return loadImageSource(file).then(function(src){
+      var w = src.width, h = src.height, side = PHOTO_MAX_SIDE;
+      for(var attempt=0; attempt<4; attempt++){
+        var k = Math.min(1, side / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w*k)), ch = Math.max(1, Math.round(h*k));
+        var cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
+        var ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0,0,cw,ch);
+        ctx.drawImage(src, 0, 0, cw, ch);
+        var q = [0.8, 0.7, 0.6, 0.5][attempt];
+        var data = cv.toDataURL("image/jpeg", q);
+        if(data.length <= PHOTO_MAX_CHARS){
+          if(src.close) src.close();
+          return { data: data, w: cw, h: ch };
+        }
+        side = Math.round(side * 0.8);
+      }
+      throw new Error("too big");
+    });
+  }
+
+  var cameraSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.6-2.4h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.6"/></svg>';
+
+  function photoSectionHtml(id, pd){
+    return '<div id="'+id+'">' + photoGridInner(pd) + '</div>';
+  }
+  function photoGridInner(pd){
+    var h = '<div class="photo-grid">';
+    pd.items.forEach(function(it, i){
+      h += '<div class="photo-thumb'+(it.isNew?" is-new":"")+'" data-idx="'+i+'" role="button" tabindex="0" aria-label="Ver foto">' +
+        '<img src="'+it.data+'" alt="Foto '+(i+1)+'" loading="lazy">' +
+        '<button type="button" class="photo-del" data-idx="'+i+'" aria-label="Quitar foto" title="Quitar foto">✕</button></div>';
+    });
+    if(pd.items.length < MAX_PHOTOS){
+      h += '<button type="button" class="photo-add" data-act="add">'+cameraSvg+'<span>Agregar</span></button>';
+    }
+    h += '</div>' +
+      '<input type="file" class="photo-file" accept="image/*" multiple hidden>' +
+      '<div class="photo-status">' +
+        (pd.loading ? "Cargando fotos…" : pd.busy>0 ? "Procesando foto…" :
+         pd.failed ? "No se pudieron cargar las fotos guardadas." :
+         photosChanged(pd) ? "Las fotos se guardan al tocar Guardar." : "") +
+      '</div>';
+    return h;
+  }
+
+  // Wires up a photo section. `isCurrent()` tells whether this draft is still the
+  // one on screen (the sheet may have been closed / switched while loading).
+  function bindPhotoSection(id, pd, isCurrent){
+    var root = document.getElementById(id);
+    if(!root) return;
+    function redraw(){
+      if(!isCurrent()) return;
+      var r = document.getElementById(id);
+      if(!r) return;
+      r.innerHTML = photoGridInner(pd);
+      wire(r);
+    }
+    function wire(r){
+      var fileEl = r.querySelector(".photo-file");
+      var addBtn = r.querySelector(".photo-add");
+      if(addBtn) addBtn.addEventListener("click", function(){ fileEl.click(); });
+      fileEl.addEventListener("change", function(){
+        var files = Array.prototype.slice.call(fileEl.files || []);
+        fileEl.value = "";
+        if(!files.length) return;
+        var room = MAX_PHOTOS - pd.items.length - pd.busy;
+        if(files.length > room){
+          showToast(room > 0 ? "Máximo "+MAX_PHOTOS+" fotos: se agregan solo "+room : "Máximo "+MAX_PHOTOS+" fotos");
+          files = files.slice(0, Math.max(0, room));
+        }
+        files.forEach(function(f){
+          pd.busy++; redraw();
+          shrinkImage(f).then(function(res){
+            pd.items.push({ id: uid(), data: res.data, w: res.w, h: res.h, createdAt: Date.now(), isNew: true });
+            pd.touched = true;
+          }).catch(function(err){
+            console.error("photo error", err);
+            showToast("No se pudo leer una de las imágenes");
+          }).then(function(){ pd.busy--; redraw(); });
+        });
+      });
+      r.querySelectorAll(".photo-thumb").forEach(function(t){
+        var idx = parseInt(t.dataset.idx, 10);
+        t.addEventListener("click", function(e){
+          if(e.target.closest(".photo-del")) return;
+          openLightbox(pd.items.map(function(i){ return i.data; }), idx);
+        });
+        t.addEventListener("keydown", function(e){
+          if(e.target===t && (e.key==="Enter" || e.key===" ")){ e.preventDefault(); openLightbox(pd.items.map(function(i){ return i.data; }), idx); }
+        });
+      });
+      r.querySelectorAll(".photo-del").forEach(function(b){
+        b.addEventListener("click", function(e){
+          e.stopPropagation();
+          var it = pd.items[parseInt(b.dataset.idx, 10)];
+          if(!it) return;
+          pd.items = pd.items.filter(function(x){ return x !== it; });
+          if(!it.isNew) pd.removed.push(it.id);
+          pd.touched = true;
+          redraw();
+        });
+      });
+    }
+    wire(root);
+    return redraw;
+  }
+
+  function openLightbox(srcs, start){
+    closeLightbox();
+    var i = start, box = document.createElement("div");
+    box.className = "lightbox"; box.id = "lightbox";
+    box.innerHTML = '<img alt=""><button type="button" class="lb-close" aria-label="Cerrar">✕</button>' +
+      (srcs.length>1 ? '<button type="button" class="lb-prev" aria-label="Anterior">‹</button><button type="button" class="lb-next" aria-label="Siguiente">›</button><span class="lb-count"></span>' : '');
+    document.body.appendChild(box);
+    function show(){
+      box.querySelector("img").src = srcs[i];
+      var c = box.querySelector(".lb-count"); if(c) c.textContent = (i+1)+" / "+srcs.length;
+    }
+    function step(d){ i = (i + d + srcs.length) % srcs.length; show(); }
+    box.addEventListener("click", function(e){
+      if(e.target.classList.contains("lb-prev")) return step(-1);
+      if(e.target.classList.contains("lb-next")) return step(1);
+      if(e.target.tagName !== "IMG") closeLightbox();
+    });
+    box._key = function(e){
+      if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); closeLightbox(); }
+      else if(srcs.length>1 && e.key==="ArrowLeft") step(-1);
+      else if(srcs.length>1 && e.key==="ArrowRight") step(1);
+    };
+    document.addEventListener("keydown", box._key, true);
+    show();
+  }
+  function closeLightbox(){
+    var box = document.getElementById("lightbox");
+    if(!box) return;
+    document.removeEventListener("keydown", box._key, true);
+    box.remove();
   }
 
   /* ============================= import parser ============================= */
@@ -651,7 +895,8 @@ const googleProvider = new GoogleAuthProvider();
           return a ? '<span class="dot" style="background:'+a.color+'"></span>' : "";
         }).join("") + (rec.activityIds.length>5 ? '<span class="dot-more">+'+(rec.activityIds.length-5)+'</span>' : '') + '</div>';
       } else { dots = '<div class="dots"></div>'; }
-      var noteFlag = (rec && rec.note) ? '<span class="note-flag" title="Tiene nota"></span>' : "";
+      var noteFlag = ((rec && rec.note) ? '<span class="note-flag" title="Tiene nota"></span>' : "") +
+        ((rec && rec.photoCount > 0) ? '<span class="photo-flag" title="Tiene fotos">'+cameraSvg+'</span>' : "");
       html += '<button type="button" class="day-cell'+(isToday?" today":"")+'" data-iso="'+iso+'">' +
         noteFlag + '<span class="dnum">'+day+'</span>' + dots + '</button>';
     });
@@ -659,7 +904,7 @@ const googleProvider = new GoogleAuthProvider();
 
     var monthKey = y+"-"+pad2(m+1);
     if(!monthNoteDraft || monthNoteDraft.key !== monthKey){
-      monthNoteDraft = { key: monthKey, note: getMonthNote(monthKey), dirty: false };
+      monthNoteDraft = { key: monthKey, note: getMonthNote(monthKey), dirty: false, photos: newPhotoDraft("m:"+monthKey) };
     } else if(!monthNoteDraft.dirty){
       // Untouched box: follow the saved note, so data that arrives after the
       // first render (page load, switching logbook) shows up instead of "".
@@ -668,6 +913,8 @@ const googleProvider = new GoogleAuthProvider();
     html += '<div class="card">' +
       '<h2 style="font-size:17px;margin-bottom:12px;">Notas de '+MONTHS[m]+'</h2>' +
       '<textarea class="note-input" id="month-note-input" placeholder="'+copy("monthHint")+'">'+escapeHtml(monthNoteDraft.note)+'</textarea>' +
+      '<label class="field-label" style="margin-top:16px;">Fotos del mes</label>' +
+      photoSectionHtml("month-photos", monthNoteDraft.photos) +
       '<div class="btn-row" style="margin-top:12px;">' +
         '<button class="btn primary" id="month-note-save" title="Ctrl + Enter">Guardar</button>' +
         '<button class="btn ghost" id="month-note-cancel">Cancelar</button>' +
@@ -691,8 +938,14 @@ const googleProvider = new GoogleAuthProvider();
 
     var monthNoteEl = document.getElementById("month-note-input");
     monthNoteEl.addEventListener("input", function(){ monthNoteDraft.note = monthNoteEl.value; monthNoteDraft.dirty = true; });
+    var mDraft = monthNoteDraft;
+    var redrawMonthPhotos = bindPhotoSection("month-photos", mDraft.photos, function(){ return monthNoteDraft === mDraft && !!document.getElementById("month-photos"); });
+    ensurePhotos(mDraft.photos, getMonthPhotoCount(monthKey), redrawMonthPhotos);
+    if(mDraft.photos.loading) redrawMonthPhotos();
     function saveMonthDraft(){
-      saveMonthNote(monthKey, monthNoteDraft.note);
+      var count = commitPhotos(mDraft.photos, getMonthPhotoCount(monthKey));
+      saveMonthNote(monthKey, monthNoteDraft.note, count);
+      redrawMonthPhotos();
       monthNoteDraft.dirty = false;
       showToast("Notas del mes guardadas");
     }
@@ -725,7 +978,7 @@ const googleProvider = new GoogleAuthProvider();
     scrim.hidden = false;
     var day = getDay(iso);
     if(!sheetDraft || sheetDraft.iso !== iso){
-      sheetDraft = { iso: iso, note: day.note||"", activityIds: (day.activityIds||[]).slice() };
+      sheetDraft = { iso: iso, note: day.note||"", activityIds: (day.activityIds||[]).slice(), photos: newPhotoDraft("d:"+iso) };
     }
     var html = '<div class="sheet-handle"></div>' +
       '<div class="sheet-head"><h3>'+dateLabel(iso)+'</h3><button class="sheet-close" id="sheet-close">✕</button></div>' +
@@ -740,6 +993,8 @@ const googleProvider = new GoogleAuthProvider();
       '</div>' +
       '<label class="field-label" style="margin-top:16px;">Notas del día</label>' +
       '<textarea class="note-input" id="note-input" placeholder="'+copy("noteHint")+'">'+escapeHtml(sheetDraft.note)+'</textarea>' +
+      '<label class="field-label" style="margin-top:16px;">Fotos</label>' +
+      photoSectionHtml("day-photos", sheetDraft.photos) +
       '<div class="btn-row" style="margin-top:16px;">' +
         '<button class="btn primary" id="sheet-save" title="Ctrl + Enter">Guardar</button>' +
         '<button class="btn ghost" id="sheet-cancel">Cancelar</button>' +
@@ -767,8 +1022,13 @@ const googleProvider = new GoogleAuthProvider();
     var noteEl = document.getElementById("note-input");
     noteEl.addEventListener("input", function(){ sheetDraft.note = noteEl.value; });
 
+    var dDraft = sheetDraft;
+    var redrawDayPhotos = bindPhotoSection("day-photos", dDraft.photos, function(){ return sheetDraft === dDraft && !!document.getElementById("day-photos"); });
+    ensurePhotos(dDraft.photos, day.photoCount||0, redrawDayPhotos);
+    if(dDraft.photos.loading) redrawDayPhotos();
     function saveAndClose(){
-      saveDay(iso, { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note });
+      var count = commitPhotos(dDraft.photos, day.photoCount||0);
+      saveDay(iso, { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note, photoCount: count });
       showToast("Día guardado");
       sheetDraft = null;
       state.openDayISO = null;
