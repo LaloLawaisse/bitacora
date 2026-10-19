@@ -138,6 +138,31 @@
   .note-flag{ position:absolute; top:6px; right:7px; width:5px;height:5px;border-radius:50%; background:var(--gold); }
   .photo-flag{ position:absolute; right:6px; bottom:6px; width:12px;height:12px; color:var(--accent); display:block; }
 
+  /* ---------- reading periods ---------- */
+  .day-cell.reading{ background:var(--gold-soft); }
+  .day-cell.reading-start{ border-left:3px solid var(--gold); }
+  .day-cell.reading-end{ border-right:3px solid var(--gold); }
+  .reading-box{ display:flex; flex-direction:column; gap:8px; }
+  .book-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-radius:var(--r-m); background:var(--surface-2); border:1px solid var(--border); font-size:13.5px; }
+  .book-tag{ font-size:10.5px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; padding:3px 8px; border-radius:99px; background:var(--surface-3); color:var(--ink-soft); flex:none; }
+  .book-tag.start{ background:var(--gold-soft); color:var(--gold); }
+  .book-tag.end{ background:var(--accent-soft); color:var(--accent-strong); }
+  .book-title{ font-weight:600; flex:1; min-width:0; overflow-wrap:anywhere; }
+  .book-since{ font-size:12px; color:var(--ink-mute); }
+  .book-x{ border:none; background:transparent; color:var(--ink-mute); cursor:pointer; font-size:13px; padding:2px 6px; border-radius:6px; }
+  .book-x:hover{ background:var(--danger-soft); color:var(--danger); }
+  .btn.mini{ padding:6px 12px; font-size:12px; }
+  .book-add-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  .book-add-row .text-input{ flex:1; min-width:160px; }
+  .book-value{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; padding:10px 12px; border-radius:var(--r-m); background:var(--gold-soft); }
+  .book-value label{ font-size:12.5px; font-weight:700; color:var(--ink-soft); }
+  .book-value select{ flex:1; min-width:150px; border:1px solid var(--border-strong); border-radius:var(--r-s); background:var(--surface); color:var(--ink); padding:7px 10px; font-size:13.5px; }
+  .read-item{ padding:11px 0; border-top:1px solid var(--border); }
+  .read-item:first-of-type{ border-top:none; padding-top:0; }
+  .read-item .rt{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .read-item .rt b{ font-size:14.5px; }
+  .read-item .rmeta{ font-size:12.5px; color:var(--ink-mute); margin-top:4px; line-height:1.45; }
+
   /* ---------- photos ---------- */
   .photo-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:8px; }
   .photo-thumb{ position:relative; aspect-ratio:1/1; border-radius:var(--r-m); overflow:hidden; background:var(--surface-3); border:1px solid var(--border); padding:0; cursor:zoom-in; }
@@ -348,6 +373,7 @@ const googleProvider = new GoogleAuthProvider();
     activities: [],
     days: [],
     months: [],
+    books: [],                // reading periods (personal logbook only)
     space: "main",            // "main" = bitácora personal, "grow" = bitácora de cultivo
     activeTab: "cal",
     calMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -421,7 +447,7 @@ const googleProvider = new GoogleAuthProvider();
     }
     state.space = state.space==="grow" ? "main" : "grow";
     // Everything belonging to the previous logbook is dropped: data, drafts, open forms.
-    state.activities = []; state.days = []; state.months = [];
+    state.activities = []; state.days = []; state.months = []; state.books = [];
     state.openDayISO = null; state.activeTab = "cal";
     sheetDraft = null; monthNoteDraft = null;
     showingNewActivityForm = false; confirmingDeleteId = null; editingColorId = null; newActivityName = "";
@@ -442,13 +468,15 @@ const googleProvider = new GoogleAuthProvider();
   function daysCol(){ return spaceCol("days"); }
   function monthsCol(){ return spaceCol("months"); }
   function photosCol(){ return spaceCol("photos"); }
+  function booksCol(){ return spaceCol("books"); }
 
-  var unsubActivities = null, unsubDays = null, unsubMonths = null;
+  var unsubActivities = null, unsubDays = null, unsubMonths = null, unsubBooks = null;
 
   function watchUserData(){
     if(unsubActivities) unsubActivities();
     if(unsubDays) unsubDays();
     if(unsubMonths) unsubMonths();
+    if(unsubBooks){ unsubBooks(); unsubBooks = null; }
     unsubActivities = onSnapshot(activitiesCol(), function(snap){
       state.activities = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
         .filter(function(a){ return !a.archived; })
@@ -463,6 +491,14 @@ const googleProvider = new GoogleAuthProvider();
       state.months = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
       render();
     }, function(err){ console.error("months snapshot error", err); showToast("No se pudieron cargar las notas del mes"); });
+    // Reading periods exist only in the personal logbook.
+    if(state.space === "main"){
+      unsubBooks = onSnapshot(booksCol(), function(snap){
+        state.books = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
+          .sort(function(a,b){ return (a.startISO||"") < (b.startISO||"") ? -1 : 1; });
+        render();
+      }, function(err){ console.error("books snapshot error", err); showToast("No se pudieron cargar tus libros"); });
+    } else { state.books = []; }
   }
 
   function createActivity(name,color){
@@ -939,10 +975,12 @@ const googleProvider = new GoogleAuthProvider();
       } else { dots = '<div class="dots"></div>'; }
       var noteFlag = ((rec && rec.note) ? '<span class="note-flag" title="Tiene nota"></span>' : "") +
         ((rec && rec.photoCount > 0) ? '<span class="photo-flag" title="Tiene fotos">'+cameraSvg+'</span>' : "");
-      html += '<button type="button" class="day-cell'+(isToday?" today":"")+'" data-iso="'+iso+'">' +
+      var rd = readingEnabled() ? readingInfo(iso) : null;
+      html += '<button type="button" class="day-cell'+(isToday?" today":"")+(rd?" reading"+(rd.start?" reading-start":"")+(rd.end?" reading-end":""):"")+'" data-iso="'+iso+'"'+(rd?' title="Leyendo: '+escapeHtml(rd.titles.join(", "))+'"':"")+'>' +
         noteFlag + '<span class="dnum">'+day+'</span>' + dots + '</button>';
     });
     html += '</div></div>';
+    html += monthReadingHtml(y, m);
 
     var monthKey = y+"-"+pad2(m+1);
     if(!monthNoteDraft || monthNoteDraft.key !== monthKey){
@@ -1006,6 +1044,152 @@ const googleProvider = new GoogleAuthProvider();
     if(scrim) scrim.hidden = true;
   }
 
+  /* ============================= reading periods ============================= */
+  // A "book" is a period: it starts on the day you mark "Empecé" and ends on the
+  // day you mark "Terminé" (open-ended = still reading). Days can also carry a
+  // book as the "value" of the Leer activity: day.bookValues = { activityId: bookId }.
+  function readingEnabled(){ return state.space === "main"; }
+  function isReadActivity(a){ return !!a && /^(leer|lectura|leyendo)\b/.test(normalize(a.name)); }
+  function bookEndEff(b){ var t = todayISO(); return b.endISO || (t > b.startISO ? t : b.startISO); }
+  function spanDays(a, b){ // inclusive number of days from ISO a to ISO b
+    var da = parseISO(a), db = parseISO(b);
+    return Math.round((Date.UTC(db.getFullYear(),db.getMonth(),db.getDate()) - Date.UTC(da.getFullYear(),da.getMonth(),da.getDate()))/86400000) + 1;
+  }
+  function fmtShortDate(iso, withYear){
+    var d = parseISO(iso);
+    return d.getDate()+" "+MONTHS[d.getMonth()].slice(0,3)+((withYear || d.getFullYear()!==new Date().getFullYear()) ? " "+d.getFullYear() : "");
+  }
+  function readingInfo(iso){
+    var titles = [], start = false, end = false;
+    state.books.forEach(function(b){
+      if(!b.startISO || iso < b.startISO || iso > bookEndEff(b)) return;
+      titles.push(b.title);
+      if(iso === b.startISO) start = true;
+      if(b.endISO && iso === b.endISO) end = true;
+    });
+    return titles.length ? { titles: titles, start: start, end: end } : null;
+  }
+
+  function newReadingDraft(day){
+    return { added: [], finish: [], unfinish: [], remove: [], adding: false, addTitle: "",
+             values: Object.assign({}, day.bookValues || {}) };
+  }
+  // Books as they would be after the staged (unsaved) changes of this day.
+  function effectiveBooks(iso){
+    var r = sheetDraft.reading;
+    var out = state.books.filter(function(b){ return r.remove.indexOf(b.id) < 0; }).map(function(b){
+      var end = b.endISO || null;
+      if(r.finish.indexOf(b.id) >= 0) end = iso;
+      else if(r.unfinish.indexOf(b.id) >= 0) end = null;
+      return { id:b.id, title:b.title, startISO:b.startISO, endISO:end };
+    });
+    r.added.forEach(function(a){
+      out.push({ id:a.id, title:a.title, startISO:iso, endISO: r.finish.indexOf(a.id)>=0 ? iso : null, isNew:true });
+    });
+    return out;
+  }
+  function activeBooksOn(iso){
+    return effectiveBooks(iso).filter(function(b){ return b.startISO <= iso && (!b.endISO || b.endISO >= iso); });
+  }
+
+  function bookValuesHtml(iso){
+    if(!readingEnabled()) return "";
+    var d = sheetDraft, html = "", active = activeBooksOn(iso);
+    state.activities.forEach(function(a){
+      if(d.activityIds.indexOf(a.id) < 0 || !isReadActivity(a)) return;
+      var cur = d.reading.values[a.id] || "";
+      html += '<div class="book-value"><label for="bv-'+a.id+'">Libro de "'+escapeHtml(a.name)+'"</label>';
+      if(active.length){
+        html += '<select id="bv-'+a.id+'" data-act-id="'+a.id+'"><option value="">— sin libro —</option>' +
+          active.map(function(b){ return '<option value="'+b.id+'"'+(b.id===cur?" selected":"")+'>'+escapeHtml(b.title)+'</option>'; }).join("") + '</select>';
+      } else {
+        html += '<span class="muted" style="font-size:12.5px;">No hay un libro en curso — marcá "Empecé un libro" más abajo (en Lectura).</span>';
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function readingHtml(iso){
+    if(!readingEnabled()) return "";
+    var r = sheetDraft.reading, eff = effectiveBooks(iso);
+    var started  = eff.filter(function(b){ return b.startISO === iso; });
+    var finished = eff.filter(function(b){ return b.endISO === iso; });
+    var going    = eff.filter(function(b){ return b.startISO < iso && !b.endISO; });
+    var h = '<label class="field-label" style="margin-top:16px;">Lectura</label><div class="reading-box">';
+    started.forEach(function(b){
+      h += '<div class="book-line"><span class="book-tag start">Empecé</span><span class="book-title">'+escapeHtml(b.title)+'</span>' +
+        (!b.endISO ? '<button type="button" class="btn ghost mini" data-act="finish" data-id="'+b.id+'">Terminé hoy</button>' : '') +
+        '<button type="button" class="book-x" data-act="unstart" data-id="'+b.id+'" title="Quitar este libro" aria-label="Quitar libro">✕</button></div>';
+    });
+    finished.forEach(function(b){
+      h += '<div class="book-line"><span class="book-tag end">Terminé</span><span class="book-title">'+escapeHtml(b.title)+'</span>' +
+        '<span class="book-since">desde '+fmtShortDate(b.startISO)+'</span>' +
+        '<button type="button" class="book-x" data-act="unfinish" data-id="'+b.id+'" title="Deshacer" aria-label="Deshacer terminado">✕</button></div>';
+    });
+    going.forEach(function(b){
+      h += '<div class="book-line"><span class="book-tag">Leyendo</span><span class="book-title">'+escapeHtml(b.title)+'</span>' +
+        '<span class="book-since">desde '+fmtShortDate(b.startISO)+'</span>' +
+        '<button type="button" class="btn ghost mini" data-act="finish" data-id="'+b.id+'">Terminé hoy</button></div>';
+    });
+    if(r.adding){
+      h += '<div class="book-add-row"><input class="text-input" id="book-title-input" maxlength="80" placeholder="Título del libro" value="'+escapeHtml(r.addTitle)+'">' +
+        '<button type="button" class="btn primary mini" data-act="add-ok">Agregar</button>' +
+        '<button type="button" class="btn ghost mini" data-act="add-cancel">Cancelar</button></div>';
+    } else {
+      h += '<div><button type="button" class="btn ghost mini" data-act="add">+ Empecé un libro</button></div>';
+    }
+    return h + '</div>';
+  }
+
+  // Applies the staged reading changes and returns the bookValues for the day doc.
+  function commitReading(iso, d){
+    var r = d.reading;
+    r.remove.forEach(function(id){ deleteDoc(doc(booksCol(), id)).catch(function(e){ console.error(e); }); });
+    r.added.forEach(function(a){
+      setDoc(doc(booksCol(), a.id), { title:a.title, startISO:iso, endISO: r.finish.indexOf(a.id)>=0 ? iso : null, createdAt:Date.now() })
+        .catch(function(e){ console.error(e); showToast("No se pudo guardar un libro"); });
+    });
+    r.finish.forEach(function(id){
+      if(r.added.some(function(a){ return a.id===id; })) return;
+      setDoc(doc(booksCol(), id), { endISO: iso }, { merge:true }).catch(function(e){ console.error(e); });
+    });
+    r.unfinish.forEach(function(id){
+      setDoc(doc(booksCol(), id), { endISO: null }, { merge:true }).catch(function(e){ console.error(e); });
+    });
+    var active = activeBooksOn(iso), values = {};
+    state.activities.forEach(function(a){
+      var bid = r.values[a.id];
+      if(bid && d.activityIds.indexOf(a.id)>=0 && isReadActivity(a) && active.some(function(b){ return b.id===bid; })) values[a.id] = bid;
+    });
+    return values;
+  }
+
+  function monthReadingHtml(y, m){
+    if(!readingEnabled()) return "";
+    var dim = new Date(y, m+1, 0).getDate();
+    var first = y+"-"+pad2(m+1)+"-01", last = y+"-"+pad2(m+1)+"-"+pad2(dim);
+    var items = state.books.filter(function(b){ return b.startISO && b.startISO <= last && bookEndEff(b) >= first; });
+    if(!items.length) return "";
+    var body = items.map(function(b){
+      var endEff = bookEndEff(b);
+      var inMonth = spanDays(b.startISO > first ? b.startISO : first, endEff < last ? endEff : last);
+      var total = spanDays(b.startISO, endEff);
+      var readDays = state.days.filter(function(dd){
+        var v = dd.bookValues; if(!v || dd.date < b.startISO || dd.date > endEff) return false;
+        return Object.keys(v).some(function(k){ return v[k] === b.id; });
+      }).length;
+      var period = b.endISO ? (fmtShortDate(b.startISO)+" → "+fmtShortDate(b.endISO)) : ("desde el "+fmtShortDate(b.startISO));
+      var meta = period + " · " + inMonth + (inMonth===1?" día":" días") + " en " + MONTHS[m] +
+        (total !== inMonth ? " · " + total + " días en total" : "") +
+        (readDays ? " · " + readDays + (readDays===1?" día":" días") + " con lectura anotada" : "");
+      return '<div class="read-item"><div class="rt"><b>'+escapeHtml(b.title)+'</b>' +
+        '<span class="book-tag '+(b.endISO?"end":"start")+'">'+(b.endISO?"Terminado":"En curso")+'</span></div>' +
+        '<div class="rmeta">'+meta+'</div></div>';
+    }).join("");
+    return '<div class="card"><h2 style="font-size:17px;margin-bottom:12px;">Lectura de '+MONTHS[m]+'</h2>'+body+'</div>';
+  }
+
   // Local, unsaved draft of the open day sheet. Nothing here touches
   // Firestore until "Guardar" is pressed; "Cancelar" (or the ✕, or clicking
   // outside) just discards it. Kept outside renderDaySheet so a background
@@ -1020,7 +1204,7 @@ const googleProvider = new GoogleAuthProvider();
     scrim.hidden = false;
     var day = getDay(iso);
     if(!sheetDraft || sheetDraft.iso !== iso){
-      sheetDraft = { iso: iso, note: day.note||"", activityIds: (day.activityIds||[]).slice(), photos: newPhotoDraft("d:"+iso) };
+      sheetDraft = { iso: iso, note: day.note||"", activityIds: (day.activityIds||[]).slice(), photos: newPhotoDraft("d:"+iso), reading: newReadingDraft(day) };
     }
     var html = '<div class="sheet-handle"></div>' +
       '<div class="sheet-head"><h3>'+dateLabel(iso)+'</h3><button class="sheet-close" id="sheet-close">✕</button></div>' +
@@ -1033,8 +1217,10 @@ const googleProvider = new GoogleAuthProvider();
         }).join("") +
         (state.activities.length===0 ? '<span class="muted" style="font-size:13px;">Todavía no creaste actividades — hacelo en la pestaña Actividades.</span>' : '') +
       '</div>' +
+      '<div id="book-values">'+bookValuesHtml(iso)+'</div>' +
       '<label class="field-label" style="margin-top:16px;">Notas del día</label>' +
       '<textarea class="note-input" id="note-input" placeholder="'+copy("noteHint")+'">'+escapeHtml(sheetDraft.note)+'</textarea>' +
+      '<div id="reading-sec">'+readingHtml(iso)+'</div>' +
       '<label class="field-label" style="margin-top:16px;">Fotos</label>' +
       photoSectionHtml("day-photos", sheetDraft.photos) +
       '<div class="btn-row" style="margin-top:16px;">' +
@@ -1058,8 +1244,61 @@ const googleProvider = new GoogleAuthProvider();
         var act = state.activities.find(function(a){ return a.id===id; });
         chip.classList.toggle("on", isOn);
         chip.style.cssText = (isOn && act) ? ("background:"+rgba(act.color,.16)+";border-color:"+act.color+";color:"+chipText(act.color)) : "";
+        if(readingEnabled() && act && isReadActivity(act)){
+          // With a single book in progress, pick it automatically.
+          var act2 = activeBooksOn(iso);
+          if(isOn && !sheetDraft.reading.values[act.id] && act2.length===1) sheetDraft.reading.values[act.id] = act2[0].id;
+          redrawBookValues();
+        }
       });
     });
+
+    function redrawBookValues(){
+      var box = document.getElementById("book-values"); if(!box) return;
+      box.innerHTML = bookValuesHtml(iso);
+      box.querySelectorAll("select[data-act-id]").forEach(function(sel){
+        sel.addEventListener("change", function(){ sheetDraft.reading.values[sel.dataset.actId] = sel.value; });
+      });
+    }
+    function redrawReading(){
+      var box = document.getElementById("reading-sec"); if(!box) return;
+      box.innerHTML = readingHtml(iso);
+      var inp = document.getElementById("book-title-input");
+      if(inp){
+        inp.addEventListener("input", function(){ sheetDraft.reading.addTitle = inp.value; });
+        inp.addEventListener("keydown", function(e){
+          if(e.key==="Enter" && !(e.ctrlKey||e.metaKey)){ e.preventDefault(); e.stopPropagation(); box.querySelector('[data-act="add-ok"]').click(); }
+          else if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); box.querySelector('[data-act="add-cancel"]').click(); }
+        });
+      }
+      box.querySelectorAll("[data-act]").forEach(function(btn){
+        btn.addEventListener("click", function(){
+          var r = sheetDraft.reading, id = btn.dataset.id, act = btn.dataset.act;
+          var isAdded = function(x){ return r.added.some(function(a){ return a.id===x; }); };
+          var drop = function(arr, x){ var i = arr.indexOf(x); if(i>=0) arr.splice(i,1); };
+          if(act==="add"){ r.adding = true; r.addTitle = ""; }
+          else if(act==="add-cancel"){ r.adding = false; r.addTitle = ""; }
+          else if(act==="add-ok"){
+            var t = (inp ? inp.value : r.addTitle).trim();
+            if(!t){ if(inp) inp.focus(); return; }
+            r.added.push({ id: uid(), title: t }); r.adding = false; r.addTitle = "";
+            // started a book today: preselect it for "Leer" if that activity is on and has no book yet
+            state.activities.forEach(function(a){
+              if(isReadActivity(a) && sheetDraft.activityIds.indexOf(a.id)>=0 && !r.values[a.id] && activeBooksOn(iso).length===1) r.values[a.id] = r.added[r.added.length-1].id;
+            });
+          }
+          else if(act==="finish"){ if(r.finish.indexOf(id)<0) r.finish.push(id); drop(r.unfinish, id); }
+          else if(act==="unfinish"){ if(r.finish.indexOf(id)>=0) drop(r.finish, id); else r.unfinish.push(id); }
+          else if(act==="unstart"){
+            if(isAdded(id)){ r.added = r.added.filter(function(a){ return a.id!==id; }); drop(r.finish, id); }
+            else { r.remove.push(id); drop(r.finish, id); drop(r.unfinish, id); }
+          }
+          redrawReading(); redrawBookValues();
+          var again = document.getElementById("book-title-input"); if(again && act==="add") again.focus();
+        });
+      });
+    }
+    redrawBookValues(); redrawReading();
 
     var noteEl = document.getElementById("note-input");
     noteEl.addEventListener("input", function(){ sheetDraft.note = noteEl.value; });
@@ -1070,7 +1309,9 @@ const googleProvider = new GoogleAuthProvider();
     if(dDraft.photos.loading) redrawDayPhotos();
     function saveAndClose(){
       var count = commitPhotos(dDraft.photos, day.photoCount||0);
-      saveDay(iso, { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note, photoCount: count });
+      var patch = { activityIds: sheetDraft.activityIds.slice(), note: sheetDraft.note, photoCount: count };
+      if(readingEnabled()) patch.bookValues = commitReading(iso, sheetDraft);
+      saveDay(iso, patch);
       showToast("Día guardado");
       sheetDraft = null;
       state.openDayISO = null;
@@ -1514,12 +1755,12 @@ const googleProvider = new GoogleAuthProvider();
     state.authReady = true;
     state.user = user;
     state.space = "main";   // always land on the personal logbook after signing in
-    state.activities = []; state.days = []; state.months = [];
+    state.activities = []; state.days = []; state.months = []; state.books = [];
     state.openDayISO = null;
     if(user){ watchUserData(); }
-    else if(unsubActivities || unsubDays || unsubMonths){
-      unsubActivities && unsubActivities(); unsubDays && unsubDays(); unsubMonths && unsubMonths();
-      unsubActivities=null; unsubDays=null; unsubMonths=null;
+    else if(unsubActivities || unsubDays || unsubMonths || unsubBooks){
+      unsubActivities && unsubActivities(); unsubDays && unsubDays(); unsubMonths && unsubMonths(); unsubBooks && unsubBooks();
+      unsubActivities=null; unsubDays=null; unsubMonths=null; unsubBooks=null;
     }
     render();
   });
