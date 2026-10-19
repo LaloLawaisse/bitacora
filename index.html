@@ -184,7 +184,23 @@
   .activity-card .adel.confirm{ background:var(--danger); color:#fff; }
   .new-activity-card{ border:1.5px dashed var(--border-strong); border-radius:var(--r-m); display:flex; align-items:center; justify-content:center; gap:6px; color:var(--ink-soft); font-weight:600; font-size:13.5px; cursor:pointer; min-height:76px; background:transparent; }
   .new-activity-card:hover{ color:var(--ink); border-color:var(--accent); }
+  .activity-card .acard-actions{ display:flex; justify-content:flex-end; gap:2px; }
+  .activity-card .acolor{ border:none; background:transparent; color:var(--ink-mute); font-size:11.5px; font-weight:600; cursor:pointer; padding:3px 6px; border-radius:6px; }
+  .activity-card .acolor:hover{ background:var(--surface-3); color:var(--ink); }
   .swatch-row{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  /* ---------- color wheel ---------- */
+  .cpick{ display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start; }
+  .cp-wheel{ position:relative; width:168px; height:168px; flex:none; border-radius:50%; cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; box-shadow:0 0 0 1px var(--border-strong); }
+  .cp-wheel .cp-dim{ position:absolute; inset:0; border-radius:50%; background:#000; pointer-events:none; }
+  .cp-wheel .cp-marker{ position:absolute; width:20px; height:20px; margin:-10px 0 0 -10px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 0 1.5px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4); pointer-events:none; }
+  .cp-side{ flex:1; min-width:170px; display:flex; flex-direction:column; gap:10px; }
+  .cp-lab{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-mute); }
+  input.cp-range{ -webkit-appearance:none; appearance:none; width:100%; height:16px; border-radius:99px; outline:none; border:1px solid var(--border-strong); margin:0; }
+  input.cp-range::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:22px; height:22px; border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.55); cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+  input.cp-range::-moz-range-thumb{ width:18px; height:18px; border-radius:50%; background:#fff; border:2px solid rgba(0,0,0,.55); cursor:pointer; }
+  .cp-hexrow{ display:flex; align-items:center; gap:10px; }
+  .cp-preview{ width:34px; height:34px; border-radius:50%; flex:none; border:2px solid var(--surface); box-shadow:0 0 0 1px var(--border-strong); }
+  input.cp-hex{ font-family:var(--font-m); text-transform:uppercase; max-width:110px; }
   .swatch{ width:26px;height:26px;border-radius:50%; border:2px solid transparent; cursor:pointer; }
   .swatch.sel{ border-color:var(--ink); box-shadow:0 0 0 2px var(--surface); }
   .inline-form{ display:flex; flex-direction:column; gap:10px; border:1px solid var(--border); border-radius:var(--r-m); padding:14px; background:var(--surface-2); }
@@ -291,6 +307,31 @@ const googleProvider = new GoogleAuthProvider();
   function initials(name){ name=(name||"?").trim(); return name.slice(0,1).toUpperCase(); }
   function hexToRgb(hex){ hex=hex.replace("#",""); if(hex.length===3){hex=hex.split("").map(function(c){return c+c;}).join("");} var n=parseInt(hex,16); return [(n>>16)&255,(n>>8)&255,n&255]; }
   function rgba(hex,a){ var c=hexToRgb(hex); return "rgba("+c[0]+","+c[1]+","+c[2]+","+a+")"; }
+  function normHex(h){
+    h = (h||"").trim().replace(/^#/,"");
+    if(/^[0-9a-fA-F]{3}$/.test(h)) h = h.split("").map(function(c){return c+c;}).join("");
+    return /^[0-9a-fA-F]{6}$/.test(h) ? "#"+h.toLowerCase() : null;
+  }
+  function hexToHsv(hex){
+    var c = hexToRgb(hex), r=c[0]/255, g=c[1]/255, b=c[2]/255;
+    var mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn, h=0;
+    if(d){
+      if(mx===r) h = ((g-b)/d) % 6; else if(mx===g) h = (b-r)/d + 2; else h = (r-g)/d + 4;
+      h *= 60; if(h<0) h += 360;
+    }
+    return { h:h, s: mx ? d/mx : 0, v: mx };
+  }
+  function hsvToRgb(h,s,v){
+    var c=v*s, x=c*(1-Math.abs((h/60)%2-1)), m=v-c, r=0,g=0,b=0;
+    if(h<60){r=c;g=x;} else if(h<120){r=x;g=c;} else if(h<180){g=c;b=x;} else if(h<240){g=x;b=c;} else if(h<300){r=x;b=c;} else {r=c;b=x;}
+    return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+  }
+  function rgbToHex(c){ return "#"+c.map(function(n){ return (n<16?"0":"")+n.toString(16); }).join(""); }
+  function hsvToHex(h,s,v){ return rgbToHex(hsvToRgb(h,s,v)); }
+  function isLight(hex){ var c=hexToRgb(hex); return (0.2126*c[0]+0.7152*c[1]+0.0722*c[2])/255 > 0.62; }
+  // Text color for a chip tinted with an activity color: blended towards the
+  // theme's ink so any color (even very light/dark) stays readable.
+  function chipText(color){ return "color-mix(in srgb, "+color+" 72%, var(--ink))"; }
   function showToast(msg){
     var t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
     clearTimeout(showToast._t); showToast._t=setTimeout(function(){ t.classList.remove("show"); },2600);
@@ -383,7 +424,7 @@ const googleProvider = new GoogleAuthProvider();
     state.activities = []; state.days = []; state.months = [];
     state.openDayISO = null; state.activeTab = "cal";
     sheetDraft = null; monthNoteDraft = null;
-    showingNewActivityForm = false; confirmingDeleteId = null;
+    showingNewActivityForm = false; confirmingDeleteId = null; editingColorId = null; newActivityName = "";
     importParsed = []; importSuggestions = [];
     watchUserData();
     render();
@@ -430,6 +471,7 @@ const googleProvider = new GoogleAuthProvider();
     setDoc(doc(activitiesCol(), typeId), data);
     return typeId;
   }
+  function setActivityColor(id, color){ setDoc(doc(activitiesCol(), id), { color: color }, { merge:true }); }
   function archiveActivity(id){ setDoc(doc(activitiesCol(), id), { archived:true }, { merge:true }); }
 
   function getDay(iso){
@@ -986,7 +1028,7 @@ const googleProvider = new GoogleAuthProvider();
       '<div class="chip-row" id="sheet-chips">' +
         state.activities.map(function(a){
           var on = sheetDraft.activityIds.indexOf(a.id)>=0;
-          return '<button type="button" class="chip'+(on?" on":"")+'" data-id="'+a.id+'" style="'+(on? ("background:"+rgba(a.color,.16)+";border-color:"+a.color+";color:"+a.color) : "")+'">' +
+          return '<button type="button" class="chip'+(on?" on":"")+'" data-id="'+a.id+'" style="'+(on? ("background:"+rgba(a.color,.16)+";border-color:"+a.color+";color:"+chipText(a.color)) : "")+'">' +
             '<span class="cdot" style="background:'+a.color+'"></span>'+escapeHtml(a.name)+'</button>';
         }).join("") +
         (state.activities.length===0 ? '<span class="muted" style="font-size:13px;">Todavía no creaste actividades — hacelo en la pestaña Actividades.</span>' : '') +
@@ -1015,7 +1057,7 @@ const googleProvider = new GoogleAuthProvider();
         var isOn = sheetDraft.activityIds.indexOf(id)>=0;
         var act = state.activities.find(function(a){ return a.id===id; });
         chip.classList.toggle("on", isOn);
-        chip.style.cssText = (isOn && act) ? ("background:"+rgba(act.color,.16)+";border-color:"+act.color+";color:"+act.color) : "";
+        chip.style.cssText = (isOn && act) ? ("background:"+rgba(act.color,.16)+";border-color:"+act.color+";color:"+chipText(act.color)) : "";
       });
     });
 
@@ -1041,9 +1083,105 @@ const googleProvider = new GoogleAuthProvider();
     });
   }
 
+  /* ---- color wheel ---- */
+  var _wheelUrl = null;
+  function wheelDataUrl(){
+    if(_wheelUrl) return _wheelUrl;
+    var N = 320, cv = document.createElement("canvas"); cv.width = N; cv.height = N;
+    var ctx = cv.getContext("2d"), img = ctx.createImageData(N, N), R = N/2;
+    for(var y=0;y<N;y++){
+      for(var x=0;x<N;x++){
+        var dx = x+0.5-R, dy = y+0.5-R, r = Math.sqrt(dx*dx+dy*dy)/R, i = (y*N+x)*4;
+        if(r>1){ img.data[i+3]=0; continue; }
+        var h = (Math.atan2(dy,dx)*180/Math.PI+360)%360, c = hsvToRgb(h, r, 1);
+        img.data[i]=c[0]; img.data[i+1]=c[1]; img.data[i+2]=c[2];
+        // soft 1.5px edge
+        img.data[i+3] = r>0.99 ? Math.max(0, Math.round(255*(1-r)/0.01)) : 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    _wheelUrl = cv.toDataURL("image/png");
+    return _wheelUrl;
+  }
+
+  function colorPickerHtml(idPrefix){
+    return '<div class="cpick" id="'+idPrefix+'">' +
+      '<div class="cp-wheel" data-role="wheel" style="background:url('+wheelDataUrl()+') center/100% 100% no-repeat" role="slider" aria-label="Tono y saturación" tabindex="0">' +
+        '<div class="cp-dim" data-role="dim"></div><span class="cp-marker" data-role="marker"></span></div>' +
+      '<div class="cp-side">' +
+        '<label class="cp-lab">Brillo</label>' +
+        '<input type="range" class="cp-range" data-role="val" min="0" max="100" step="1" aria-label="Brillo">' +
+        '<label class="cp-lab">Color</label>' +
+        '<div class="cp-hexrow"><span class="cp-preview" data-role="preview"></span>' +
+          '<input class="text-input cp-hex" data-role="hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Código hexadecimal"></div>' +
+        '<div class="swatch-row" data-role="presets">' +
+          PRESET_COLORS.map(function(c){ return '<span class="swatch" data-color="'+c+'" style="background:'+c+'"></span>'; }).join("") +
+        '</div>' +
+      '</div></div>';
+  }
+
+  // Wires a picker. It only updates itself in place (never re-renders the page),
+  // so dragging is smooth and nothing else on screen is reset.
+  function bindColorPicker(root, initial, onChange){
+    if(!root) return null;
+    var $ = function(r){ return root.querySelector('[data-role="'+r+'"]'); };
+    var wheel=$("wheel"), dim=$("dim"), marker=$("marker"), val=$("val"), prev=$("preview"), hexEl=$("hex");
+    var hsv = hexToHsv(normHex(initial) || PRESET_COLORS[0]);
+    function currentHex(){ return hsvToHex(hsv.h, hsv.s, hsv.v); }
+    function paint(skipHexField){
+      var R = wheel.clientWidth/2, a = hsv.h*Math.PI/180;
+      marker.style.left = (R + Math.cos(a)*hsv.s*R)+"px";
+      marker.style.top  = (R + Math.sin(a)*hsv.s*R)+"px";
+      dim.style.opacity = String(1-hsv.v);
+      val.value = String(Math.round(hsv.v*100));
+      val.style.background = "linear-gradient(to right,#000,"+hsvToHex(hsv.h,hsv.s,1)+")";
+      var hex = currentHex();
+      prev.style.background = hex;
+      if(!skipHexField) hexEl.value = hex;
+      root.querySelectorAll(".swatch").forEach(function(sw){ sw.classList.toggle("sel", sw.dataset.color===hex); });
+    }
+    function emit(skipHexField){ paint(skipHexField); onChange(currentHex()); }
+    function fromPointer(e){
+      var rc = wheel.getBoundingClientRect(), R = rc.width/2;
+      var dx = e.clientX-(rc.left+R), dy = e.clientY-(rc.top+R);
+      hsv.h = (Math.atan2(dy,dx)*180/Math.PI+360)%360;
+      hsv.s = Math.min(1, Math.sqrt(dx*dx+dy*dy)/R);
+      if(hsv.v < 0.05) hsv.v = 0.05;      // keep it from going fully black
+      emit();
+    }
+    var dragging = false;
+    wheel.addEventListener("pointerdown", function(e){ dragging = true; try{ wheel.setPointerCapture(e.pointerId); }catch(_){} e.preventDefault(); fromPointer(e); });
+    wheel.addEventListener("pointermove", function(e){ if(dragging) fromPointer(e); });
+    function stop(){ dragging = false; }
+    wheel.addEventListener("pointerup", stop); wheel.addEventListener("pointercancel", stop);
+    wheel.addEventListener("keydown", function(e){
+      var step = e.shiftKey ? 0.1 : 0.03, used = true;
+      if(e.key==="ArrowLeft") hsv.h = (hsv.h-6+360)%360;
+      else if(e.key==="ArrowRight") hsv.h = (hsv.h+6)%360;
+      else if(e.key==="ArrowUp") hsv.s = Math.min(1, hsv.s+step);
+      else if(e.key==="ArrowDown") hsv.s = Math.max(0, hsv.s-step);
+      else used = false;
+      if(used){ e.preventDefault(); emit(); }
+    });
+    val.addEventListener("input", function(){ hsv.v = Math.max(0.05, parseInt(val.value,10)/100); emit(); });
+    hexEl.addEventListener("input", function(){
+      var h = normHex(hexEl.value);
+      if(h){ hsv = hexToHsv(h); emit(true); }
+    });
+    hexEl.addEventListener("blur", function(){ hexEl.value = currentHex(); });
+    root.querySelectorAll(".swatch").forEach(function(sw){
+      sw.addEventListener("click", function(){ hsv = hexToHsv(sw.dataset.color); emit(); });
+    });
+    paint();
+    return { set: function(hex){ var h = normHex(hex); if(h){ hsv = hexToHsv(h); emit(); } } };
+  }
+
   /* ---- activities ---- */
   var showingNewActivityForm = false;
   var newActivityColor = PRESET_COLORS[0];
+  var newActivityName = "";
+  var editingColorId = null;      // activity whose color is being edited
+  var editColorValue = null;
   var confirmingDeleteId = null;
 
   function countsByActivity(){
@@ -1062,21 +1200,34 @@ const googleProvider = new GoogleAuthProvider();
         '<div class="bar" style="background:'+a.color+'"></div>' +
         '<div class="aname">'+escapeHtml(a.name)+'</div>' +
         '<div class="acount mono">'+n+(n===1?" registro":" registros")+'</div>' +
-        '<button class="adel'+(confirmingDeleteId===a.id?" confirm":"")+'" data-id="'+a.id+'">'+(confirmingDeleteId===a.id?"Sí, borrar":"Archivar")+'</button>' +
+        '<div class="acard-actions">' +
+          '<button class="acolor" data-id="'+a.id+'" title="Cambiar color">Color</button>' +
+          '<button class="adel'+(confirmingDeleteId===a.id?" confirm":"")+'" data-id="'+a.id+'">'+(confirmingDeleteId===a.id?"Sí, borrar":"Archivar")+'</button>' +
+        '</div>' +
       '</div>';
     }).join("");
 
-    var formHtml = showingNewActivityForm ? (
-      '<div class="inline-form">' +
-        '<label class="field-label">Nombre</label>' +
-        '<input class="text-input" id="new-act-name" placeholder="'+copy("actPlaceholder")+'" maxlength="40">' +
-        '<label class="field-label">Color</label>' +
-        '<div class="swatch-row" id="swatch-row">' +
-          PRESET_COLORS.map(function(c){ return '<span class="swatch'+(c===newActivityColor?" sel":"")+'" data-color="'+c+'" style="background:'+c+'"></span>'; }).join("") +
-        '</div>' +
+    var editing = editingColorId && state.activities.find(function(a){ return a.id===editingColorId; });
+    if(editingColorId && !editing){ editingColorId = null; }
+
+    var formHtml;
+    if(editing){
+      formHtml = '<div class="inline-form">' +
+        '<label class="field-label" style="margin:0;">Color de "'+escapeHtml(editing.name)+'"</label>' +
+        colorPickerHtml("edit-cpick") +
+        '<div class="btn-row"><button class="btn primary" id="save-color">Guardar color</button><button class="btn ghost" id="cancel-color">Cancelar</button></div>' +
+      '</div>';
+    } else if(showingNewActivityForm){
+      formHtml = '<div class="inline-form">' +
+        '<label class="field-label" style="margin:0;">Nombre</label>' +
+        '<input class="text-input" id="new-act-name" placeholder="'+copy("actPlaceholder")+'" maxlength="40" value="'+escapeHtml(newActivityName)+'">' +
+        '<label class="field-label" style="margin:0;">Color</label>' +
+        colorPickerHtml("new-cpick") +
         '<div class="btn-row"><button class="btn primary" id="save-act">Crear actividad</button><button class="btn ghost" id="cancel-act">Cancelar</button></div>' +
-      '</div>'
-    ) : '<button class="new-activity-card" id="add-act">+ Nueva actividad</button>';
+      '</div>';
+    } else {
+      formHtml = '<button class="new-activity-card" id="add-act">+ Nueva actividad</button>';
+    }
 
     el.innerHTML = '<div class="card"><h2 style="font-size:19px;margin-bottom:14px;">Tus actividades</h2>' +
       '<div class="activity-grid">'+cards+'</div>' +
@@ -1090,23 +1241,52 @@ const googleProvider = new GoogleAuthProvider();
         else { confirmingDeleteId = btn.dataset.id; renderActivitiesPanel(); setTimeout(function(){ if(confirmingDeleteId===btn.dataset.id){confirmingDeleteId=null; renderActivitiesPanel();} },3000); }
       });
     });
+    el.querySelectorAll(".acolor[data-id]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var a = state.activities.find(function(x){ return x.id===btn.dataset.id; });
+        if(!a) return;
+        editingColorId = a.id; editColorValue = a.color; showingNewActivityForm = false;
+        renderActivitiesPanel();
+        var f = document.getElementById("edit-cpick"); if(f && f.scrollIntoView) f.scrollIntoView({block:"nearest", behavior:"smooth"});
+      });
+    });
     var addBtn = document.getElementById("add-act");
-    if(addBtn) addBtn.addEventListener("click", function(){ showingNewActivityForm=true; newActivityColor=PRESET_COLORS[state.activities.length % PRESET_COLORS.length]; renderActivitiesPanel(); });
+    if(addBtn) addBtn.addEventListener("click", function(){
+      showingNewActivityForm=true; editingColorId=null; newActivityName="";
+      newActivityColor=PRESET_COLORS[state.activities.length % PRESET_COLORS.length];
+      renderActivitiesPanel();
+    });
     var cancelBtn = document.getElementById("cancel-act");
-    if(cancelBtn) cancelBtn.addEventListener("click", function(){ showingNewActivityForm=false; renderActivitiesPanel(); });
-    var swatchRow = document.getElementById("swatch-row");
-    if(swatchRow) swatchRow.querySelectorAll(".swatch").forEach(function(s){
-      s.addEventListener("click", function(){ newActivityColor = s.dataset.color; renderActivitiesPanel(); });
-    });
+    if(cancelBtn) cancelBtn.addEventListener("click", function(){ showingNewActivityForm=false; newActivityName=""; renderActivitiesPanel(); });
+
+    var nameInput = document.getElementById("new-act-name");
+    if(nameInput){
+      nameInput.addEventListener("input", function(){ newActivityName = nameInput.value; });
+      bindColorPicker(document.getElementById("new-cpick"), newActivityColor, function(c){ newActivityColor = c; });
+    }
     var saveBtn = document.getElementById("save-act");
-    if(saveBtn) saveBtn.addEventListener("click", function(){
-      var input = document.getElementById("new-act-name");
-      var name = input.value.trim();
-      if(!name) return;
-      createActivity(name, newActivityColor);
-      showingNewActivityForm = false;
-      showToast('Actividad "'+name+'" creada');
-    });
+    if(saveBtn){
+      var submit = function(){
+        var name = nameInput.value.trim();
+        if(!name){ nameInput.focus(); return; }
+        createActivity(name, newActivityColor);
+        showingNewActivityForm = false; newActivityName = "";
+        showToast('Actividad "'+name+'" creada');
+      };
+      saveBtn.addEventListener("click", submit);
+      nameInput.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); submit(); } });
+    }
+
+    if(editing){
+      bindColorPicker(document.getElementById("edit-cpick"), editColorValue, function(c){ editColorValue = c; });
+      document.getElementById("cancel-color").addEventListener("click", function(){ editingColorId = null; renderActivitiesPanel(); });
+      document.getElementById("save-color").addEventListener("click", function(){
+        setActivityColor(editing.id, editColorValue);
+        editingColorId = null;
+        showToast('Color de "'+editing.name+'" actualizado');
+        renderActivitiesPanel();
+      });
+    }
   }
 
   /* ---- stats ---- */
@@ -1169,7 +1349,7 @@ const googleProvider = new GoogleAuthProvider();
         var row = wdCounts[a.id]; var rmax = Math.max.apply(null,row.concat([1]));
         return '<tr><td class="hname">'+escapeHtml(a.name)+'</td>' + row.map(function(c){
           var alpha = c===0 ? 0.06 : 0.22 + 0.66*(c/rmax);
-          return '<td><div class="heat-cell" style="background:'+rgba(a.color,alpha)+';color:'+(alpha>0.5? '#fff':'var(--ink)')+'">'+(c||"")+'</div></td>';
+          return '<td><div class="heat-cell" style="background:'+rgba(a.color,alpha)+';color:'+(alpha>0.5 && !isLight(a.color) ? '#fff':'var(--ink)')+'">'+(c||"")+'</div></td>';
         }).join("") + '</tr>';
       }).join("") + '</tbody></table></div>'
     ) : '<p class="empty-state">Marcá actividades en el calendario para ver en qué días las hacés más.</p>';
@@ -1274,7 +1454,7 @@ const googleProvider = new GoogleAuthProvider();
     var cardsHtml = importParsed.map(function(r,i){
       var chips = state.activities.map(function(a){
         var on = r.matchedIds.indexOf(a.id)>=0;
-        return '<button type="button" class="chip'+(on?" on":"")+'" data-i="'+i+'" data-id="'+a.id+'" style="'+(on? ("background:"+rgba(a.color,.16)+";border-color:"+a.color+";color:"+a.color) : "")+'">' +
+        return '<button type="button" class="chip'+(on?" on":"")+'" data-i="'+i+'" data-id="'+a.id+'" style="'+(on? ("background:"+rgba(a.color,.16)+";border-color:"+a.color+";color:"+chipText(a.color)) : "")+'">' +
           '<span class="cdot" style="background:'+a.color+'"></span>'+escapeHtml(a.name)+'</button>';
       }).join("");
       var existing = getDay(r.iso);
